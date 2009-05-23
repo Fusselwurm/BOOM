@@ -37,25 +37,25 @@ quite a lot of stuff.
 // first: tiles. we have a 2-dim array of them.
 // for the tiles, we use prototypal inheritance. because they are many.
 
+/**
+* to be applied to arrays.
+* @param item array member to be searched for
+* @param path [opt] if the search should go for a member of the array's member
+* @return index or -1
+*/
+Array.prototype.indexOf = function (item, name) {
+	var length = this.length;
+	for (var i = 0; i < length; i++) {
+		if ((name && (this[i][name] === item)) || (!name && (this[i] === item))) {
+			return i;
+		}
+	}
+	return -1;
+};
+
 
 var BOOM = {
 	util: {
-
-		/**
-		* to be applied to arrays.
-		* @param item array member to be searched for
-		* @param path [opt] if the search should go for a member of the array's member
-		* @return index or -1
-		*/
-		indexOf: function (item, name) {
-			var length = this.length;
-			for (var i = 0; i < length; i++) {
-				if ((name && (this[i][name] === item)) || (!name && (this[i] === item))) {
-					return i;
-				}
-			}
-			return -1;
-		},
 
 		/**
 		* get event object. use as a mixin
@@ -88,7 +88,7 @@ var BOOM = {
 				*
 				*/
 				unsubscribe: function (fn) {
-					var idx = BOOM.util.indexOf.apply(listeners, [fn], 'fn');
+					var idx = listeners.indexOf(fn, 'fn');
 					if (idx > -1) {
 						listeners.splice(idx, 1);
 						return true;
@@ -160,11 +160,6 @@ var BOOM = {
 					}
 				}
 			};
-			var player = {
-				getType: function () {
-					return 'player';
-				}
-			};
 			var powerup = {
 				getType: function () {
 					return 'powerup';
@@ -187,6 +182,20 @@ var BOOM = {
 				},
 				PowerupBlastRange: function () {
 					this.kind = 'blast';
+				},
+				player:  function (spec) {
+					var items = [];
+					return {
+						getNumBombs: function () {
+							return items.length;
+						},
+						getColor: function () {
+							return spec.color;
+						},
+						getType: function () {
+							return 'player';
+						}
+					};
 				}
 			};
 			that.Granite.prototype = material;
@@ -264,11 +273,42 @@ BOOM.engine = (function (my) {
 			}
 		}
 	};
+
+	that.getPlayer = function (color) {
+		var obj, i;
+		for (i = 0; i < my.objects.length; i++) {
+			obj = my.objects[i].obj;
+			if ((obj.getType() === 'player') && (obj.getColor() === color)) {
+				return obj;
+			}
+		}
+	};
 	that.getPos = function (obj) {
-		var i = BOOM.util.indexOf.apply(my.objects, [obj, 'obj']);
+		var i = my.objects.indexOf(obj, 'obj');
 		return {
 			x: my.objects[i].pos.x,
 			y: my.objects[i].pos.y
+		};
+	};
+
+	that.setPos = function (obj, x, y) {
+		var oldPos = that.getPos(obj),
+			oldTile = my.tiles[Math.round(oldPos.x)][Math.round(oldPos.y)],
+			newTile = my.tiles[Math.round(x)][Math.round(y)];
+
+
+		// if tile has changed... remove from old tile, add to new one
+		if (oldTile !== newTile) {
+			oldTile.splice(oldTile.indexOf(obj), 1);
+			newTile.push(obj);
+			that.invalidate(oldPos.x, oldPos.x);
+			that.invalidate(x, y);
+		}
+
+		var i = my.objects.indexOf(obj, 'obj');
+		my.objects[i].pos = {
+			x: x,
+			y: y
 		};
 	};
 	that.getPowerup = function (x, y) {
@@ -288,13 +328,13 @@ BOOM.engine = (function (my) {
 	};
 
 	that.destroy = function (obj) {
-		var i = BOOM.util.indexOf.apply(my.objects, [obj, 'obj']);
+		var i = my.objects.indexOf(obj, 'obj');
 		if (i === -1) {
 			return false;
 		}
 		var o = my.objects[i];
 
-		var j = BOOM.util.indexOf.apply(my.tiles[o.pos.x][o.pos.y], [obj]);
+		var j = my.tiles[o.pos.x][o.pos.y].indexOf(obj);
 		my.tiles[o.pos.x][o.pos.y].splice(j, 1);
 
 		my.objects.splice(i, 1);
@@ -307,11 +347,37 @@ BOOM.engine = (function (my) {
 	};
 
 	that.invalidate = function (x, y) {
-		my.tiles[x][y].status = 'invalid';
+		my.tiles[Math.round(x)][Math.round(y)].status = 'invalid';
 	};
 
+	that.getObjects = function (x, y) {
+		var i, res = [], t = my.tiles[x][y];
+		for (i = 0; i < t.length; i++) {
+			res.push(t[i]);
+		}
+		return res;
+	};
+
+	that.setDir = function (obj, dir, speed) {
+		// TODO
+	}
 	that.createObject = function (Constr, x, y) {
-		var o = new Constr();
+		x = parseFloat(x);
+		y = parseFloat(y);
+		if (isNaN(x) || isNaN(y)) {
+			return false;
+		}
+
+		var o;
+
+		if (typeof Constr === 'function') {
+			o = new Constr();
+		} else if ((typeof Constr === 'object') && (Constr !== null)) {
+			o = Constr;
+		} else {
+			return false;
+		}
+
 		var l = my.objects.push({
 			pos: {
 				x: x,
@@ -333,9 +399,9 @@ BOOM.engine = (function (my) {
 		my.tiles[spec.x][spec.y] = [];
 		BOOM.engine.createObject(spec.material, spec.x, spec.y);
 		if (spec.material === BOOM.lib.constructors.Stone) {
-			if (rnd > 0.8) {
+			if (rnd > 0.85) {
 				BOOM.engine.createObject(BOOM.lib.constructors.PowerupBlastRange, spec.x, spec.y);
-			} else if (rnd > 0.6) {
+			} else if (rnd > 0.7) {
 				BOOM.engine.createObject(BOOM.lib.constructors.PowerupBombNumber, spec.x, spec.y);
 			}
 		}
@@ -374,10 +440,12 @@ BOOM.graphics = (function () {
 
 	BOOM.engine.onChange.subscribe(function (subject, data, type) {
 		var col,
-			mat = BOOM.engine.getMaterial(data.x, data.y),
-			item = BOOM.engine.getPowerup(data.x, data.y);
+			mat, // = BOOM.engine.getMaterial(data.x, data.y),
+			item,
+			plr; // = BOOM.engine.getPowerup(data.x, data.y);
 		var id = 'BOOM_landscape_' + data.x + '_' + data.y;
 		var elm = document.getElementById(id);
+		var objs = BOOM.engine.getObjects(data.x, data.y);
 		if (!elm) {
 			elm = document.createElement('div');
 			elm.id = id;
@@ -389,6 +457,21 @@ BOOM.graphics = (function () {
 			BOOM.options.parent.appendChild(elm);
 		}
 
+		for (var i = 0; i < objs.length; i++) {
+			var obj = objs[i];
+			switch (obj.getType()) {
+				case 'material':
+					mat = obj.material;
+					break;
+				case 'player':
+					plr = obj.getColor();
+					break;
+				case 'powerup':
+					item = obj.kind;
+					break;
+			}
+		}
+
 		switch (mat) {
 			case 'granite': col = '#000'; break;
 			case 'stone': col = '#999'; break;
@@ -396,6 +479,7 @@ BOOM.graphics = (function () {
 			default: col= '#f00';
 		}
 		elm.style.backgroundColor = col;
+		elm.textContent = '';
 		if (mat === 'sand') {
 			switch (item) {
 				case 'number':
@@ -406,6 +490,11 @@ BOOM.graphics = (function () {
 					elm.style.color = '#f00';
 					elm.textContent = 'o';
 					break;
+			}
+			if (plr) {
+
+				elm.textContent = 'X';
+				elm.style.color = plr;
 			}
 		}
 
@@ -440,9 +529,31 @@ BOOM.players = (function () {
 		BOOM.engine.blast(BOOM.options.size.x - 2, 0);
 
 		// create players
+		BOOM.engine.createObject(BOOM.lib.constructors.player({color: 'red'}), 0, 0);
 	};
+
+	that.initControls = function () {
+		addEventListener('keydown', function (evt) {
+			//console.log(evt);
+			var a = '';
+			for (var name in evt) {
+				a += name + ': ' + evt[name] + ';\t';
+			}
+			//alert(a);
+			switch (evt.keyCode) {
+				case evt.DOM_VK_W:
+				case evt.DOM_VK_A:
+				case evt.DOM_VK_S:
+				case evt.DOM_VK_D:
+					// TODO: constants for directions et al
+					BOOM.engine.setDir(BOOM.engine.getPlayer('red'), 'r');
+			}
+		}, false);
+	};
+
 	return that;
 }());
 
 BOOM.engine.init();
 BOOM.players.addPlayers();
+BOOM.players.initControls();
